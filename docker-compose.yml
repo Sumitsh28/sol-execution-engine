@@ -1,4 +1,5 @@
 version: "3.8"
+
 services:
   postgres:
     image: postgres:15
@@ -10,12 +11,78 @@ services:
       POSTGRES_DB: trading_engine
     volumes:
       - pgdata:/var/lib/postgresql/data
+    networks:
+      - app-network
 
   redis:
     image: redis:7
     ports:
       - "6379:6379"
     command: redis-server --appendonly yes
+    networks:
+      - app-network
+
+  api:
+    build: .
+    command: node dist/server.js
+    ports:
+      - "4000:3000"
+    environment:
+      - PORT=3000
+      - DATABASE_URL=postgres://admin:password@postgres:5432/trading_engine
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - SOLANA_RPC_URL=https://api.devnet.solana.com
+      - WALLET_PRIVATE_KEY=${WALLET_PRIVATE_KEY}
+    depends_on:
+      - redis
+      - postgres
+    networks:
+      - app-network
+
+  worker:
+    build: .
+    command: node dist/worker.js
+    ports:
+      - "4001:3001"
+
+    environment:
+      - PORT=3001
+      - DATABASE_URL=postgres://admin:password@postgres:5432/trading_engine
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - SOLANA_RPC_URL=https://api.devnet.solana.com
+      - WALLET_PRIVATE_KEY=${WALLET_PRIVATE_KEY}
+    depends_on:
+      - redis
+      - postgres
+      - api
+    networks:
+      - app-network
+
+  prometheus:
+    image: prom/prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    networks:
+      - app-network
+
+  grafana:
+    image: grafana/grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    depends_on:
+      - prometheus
+    networks:
+      - app-network
 
 volumes:
   pgdata:
+
+networks:
+  app-network:
+    driver: bridge

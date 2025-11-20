@@ -4,9 +4,8 @@ import { tradeQueue } from "../queue/tradeQueue";
 import { redisClient } from "../config/redis";
 import { DexHandler } from "../lib/solana";
 import { BN } from "bn.js";
-import { TokenService } from "../services/tokenService"; // Import the real service
+import { TokenService } from "../services/tokenService";
 
-// --- MOCKS ---
 jest.mock("../queue/tradeQueue", () => ({
   tradeQueue: {
     add: jest.fn().mockResolvedValue({ id: "mock-job-id" }),
@@ -44,7 +43,6 @@ describe("🚀 Order Execution Engine Test Suite", () => {
   let app: FastifyInstance;
 
   beforeAll(async () => {
-    // ✅ FIX: Spy on the static method directly. This ensures it works even if imported elsewhere.
     jest.spyOn(TokenService, "getMint").mockImplementation(async (symbol) => {
       if (symbol === "SOL")
         return "So11111111111111111111111111111111111111112";
@@ -54,23 +52,22 @@ describe("🚀 Order Execution Engine Test Suite", () => {
     });
 
     app = Fastify();
-    app.post("/orders", createOrder);
+    app.post("/api/orders/execute", createOrder);
   });
 
   afterAll(async () => {
     await app.close();
-    jest.restoreAllMocks(); // Cleanup spies
+    jest.restoreAllMocks();
   });
 
   beforeEach(() => {
     jest.clearAllMocks();
   });
 
-  // API & QUEUE TESTS
   test("1. [API] Should reject orders with missing fields (400)", async () => {
     const response = await app.inject({
       method: "POST",
-      url: "/orders",
+      url: "/api/orders/execute",
       payload: { amount: 10 },
     });
     expect(response.statusCode).toBe(400);
@@ -79,7 +76,7 @@ describe("🚀 Order Execution Engine Test Suite", () => {
   test("2. [API] Should accept valid order and return 201", async () => {
     const response = await app.inject({
       method: "POST",
-      url: "/orders",
+      url: "/api/orders/execute",
       payload: { inputMint: "SOL", outputMint: "USDC", amount: 0.5 },
     });
     expect(response.statusCode).toBe(201);
@@ -88,7 +85,7 @@ describe("🚀 Order Execution Engine Test Suite", () => {
   test("3. [Queue] Should add job to BullMQ", async () => {
     await app.inject({
       method: "POST",
-      url: "/orders",
+      url: "/api/orders/execute",
       payload: { inputMint: "SOL", outputMint: "USDC", amount: 1.5 },
     });
     expect(tradeQueue.add).toHaveBeenCalledTimes(1);
@@ -98,7 +95,7 @@ describe("🚀 Order Execution Engine Test Suite", () => {
     (redisClient.get as jest.Mock).mockResolvedValue(null);
     const response = await app.inject({
       method: "POST",
-      url: "/orders",
+      url: "/api/orders/execute",
       headers: { "x-idempotency-key": "unique-123" },
       payload: { inputMint: "SOL", outputMint: "USDC", amount: 1 },
     });
@@ -109,14 +106,12 @@ describe("🚀 Order Execution Engine Test Suite", () => {
     (redisClient.get as jest.Mock).mockResolvedValue("existing-order-id");
     const response = await app.inject({
       method: "POST",
-      url: "/orders",
+      url: "/api/orders/execute",
       headers: { "x-idempotency-key": "unique-123" },
       payload: { inputMint: "SOL", outputMint: "USDC", amount: 1 },
     });
     expect(JSON.parse(response.body).status).toBe("duplicate");
   });
-
-  // --- ROUTER LOGIC TESTS ---
 
   test("6. [Router] Should prioritize Meteora if price is better", async () => {
     const dexHandler = new DexHandler();

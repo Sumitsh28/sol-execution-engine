@@ -1,0 +1,11 @@
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: "solana_engine_api"
+    static_configs:
+      - targets: ["api:3000"]
+
+  - job_name: "solana_engine_worker"
+    static_configs:
+      - targets: ["worker:3001"]

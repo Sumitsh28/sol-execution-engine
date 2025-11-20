@@ -5,6 +5,7 @@ import { DexHandler } from "./lib/solana";
 import { redisClient } from "./config/redis";
 import client from "prom-client";
 import dotenv from "dotenv";
+import Fastify from "fastify";
 
 dotenv.config();
 
@@ -13,20 +14,16 @@ const redisConfig = {
   port: Number(process.env.REDIS_PORT) || 6379,
 };
 
-// ---------------------------------------------------------
-// 1. PROMETHEUS METRICS SETUP
-// ---------------------------------------------------------
 const register = new client.Registry();
 client.collectDefaultMetrics({ register });
 
 const orderDuration = new client.Histogram({
   name: "order_processing_duration_seconds",
   help: "Duration of order processing in seconds",
-  buckets: [0.5, 1, 2, 5, 10, 30], // Buckets for duration tracking
+  buckets: [0.5, 1, 2, 5, 10, 30],
 });
 register.registerMetric(orderDuration);
 
-// Helper to publish updates to WebSocket via Redis
 const publishUpdate = async (
   orderId: string,
   status: string,
@@ -34,7 +31,7 @@ const publishUpdate = async (
 ) => {
   const message = JSON.stringify({ orderId, status, ...data });
   await redisClient.publish(`order-updates:${orderId}`, message);
-  console.log(`📡 Update sent for ${orderId}: ${status}`);
+  console.log(`Update sent for ${orderId}: ${status}`);
 };
 
 const startWorker = async () => {
@@ -42,37 +39,33 @@ const startWorker = async () => {
   const orderRepository = AppDataSource.getRepository(Order);
   const dexHandler = new DexHandler();
 
-  console.log("👷 Worker started! Listening for jobs...");
+  console.log("Worker started! Listening for jobs...");
 
   const worker = new Worker(
     "trade-queue",
     async (job) => {
-      const endTimer = orderDuration.startTimer(); // Start Prometheus timer
+      const endTimer = orderDuration.startTimer();
       const { orderId } = job.data;
 
       const order = await orderRepository.findOneBy({ id: orderId });
 
       if (!order) {
-        console.warn(`⚠️ Order ${orderId} not found in DB`);
+        console.warn(`Order ${orderId} not found in DB`);
         return;
       }
 
       try {
-        // STATUS: ROUTING
         order.status = "routing";
         await orderRepository.save(order);
         await publishUpdate(orderId, "routing", {
           message: `Scanning DEXs for best price...`,
         });
 
-        // STATUS: BUILDING
         order.status = "building";
         await publishUpdate(orderId, "building", {
           message: "Building transaction...",
         });
 
-        // EXECUTE SWAP (Now passing mints dynamically)
-        // Note: amount is passed as a number (e.g., 0.1 SOL)
         const { txHash, price, dex } = await dexHandler.executeSwap(
           orderId,
           Number(order.amount),
@@ -80,7 +73,6 @@ const startWorker = async () => {
           order.outputMint
         );
 
-        // STATUS: CONFIRMED
         order.status = "confirmed";
         order.txHash = txHash;
         order.executedPrice = price;
@@ -93,7 +85,7 @@ const startWorker = async () => {
             ? "https://explorer.solana.com/?cluster=devnet"
             : `https://explorer.solana.com/tx/${txHash}?cluster=devnet`;
 
-        console.log(`✅ SUCCESS! [${dex.toUpperCase()}] Tx: ${txHash}`);
+        console.log(`SUCCESS! [${dex.toUpperCase()}] Tx: ${txHash}`);
 
         await orderRepository.save(order);
         await publishUpdate(orderId, "confirmed", {
@@ -103,16 +95,16 @@ const startWorker = async () => {
           explorerUrl,
         });
       } catch (error: any) {
-        console.error(`❌ Order ${orderId} failed:`, error.message);
+        console.error(`Order ${orderId} failed:`, error.message);
 
         order.status = "failed";
         order.error = error.message;
         await orderRepository.save(order);
         await publishUpdate(orderId, "failed", { error: error.message });
 
-        throw error; // Triggers BullMQ retry logic
+        throw error;
       } finally {
-        endTimer(); // Stop Prometheus timer
+        endTimer();
       }
     },
     {
@@ -125,10 +117,27 @@ const startWorker = async () => {
     }
   );
 
-  // Graceful Shutdown Logic
+  const metricsServer = Fastify();
+
+  metricsServer.get("/metrics", async (req, reply) => {
+    reply.header("Content-Type", register.contentType);
+    return register.metrics();
+  });
+
+  try {
+    const METRICS_PORT = Number(process.env.WORKER_METRICS_PORT) || 3001;
+    await metricsServer.listen({ port: METRICS_PORT, host: "0.0.0.0" });
+    console.log(
+      `Worker Metrics running on http://0.0.0.0:${METRICS_PORT}/metrics`
+    );
+  } catch (err) {
+    console.error("Failed to start worker metrics server", err);
+  }
+
   process.on("SIGTERM", async () => {
-    console.log("🛑 SIGTERM received. Closing worker...");
+    console.log("SIGTERM received. Closing worker...");
     await worker.close();
+    await metricsServer.close();
     await AppDataSource.destroy();
     process.exit(0);
   });

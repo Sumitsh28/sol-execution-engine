@@ -1,4 +1,3 @@
-// ✅ FIX: Disable SSL checks
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 
 import Fastify, { FastifyInstance } from "fastify";
@@ -19,7 +18,7 @@ jest.setTimeout(90000);
 
 describe("🔥 REAL End-to-End System Test", () => {
   let server: FastifyInstance;
-  let worker: Worker | undefined; // Allow undefined for lazy loading
+  let worker: Worker | undefined;
   let wsClient: WebSocket;
 
   const socketMap = new Map<string, any>();
@@ -27,7 +26,6 @@ describe("🔥 REAL End-to-End System Test", () => {
   let testRedisPub: Redis;
   const orderRepo = AppDataSource.getRepository(Order);
 
-  // Helper to start worker on demand
   const startWorker = () => {
     const dexHandler = new DexHandler();
     return new Worker(
@@ -69,7 +67,6 @@ describe("🔥 REAL End-to-End System Test", () => {
     if (!AppDataSource.isInitialized) await AppDataSource.initialize();
     await orderRepo.clear();
 
-    // Clear queue but DO NOT start worker yet
     await tradeQueue.pause();
     await tradeQueue.drain();
     await tradeQueue.obliterate({ force: true });
@@ -77,7 +74,7 @@ describe("🔥 REAL End-to-End System Test", () => {
     server = Fastify();
     await server.register(websocket);
     await server.register(require("@fastify/cors"));
-    server.post("/orders", createOrder);
+    server.post("/api/orders/execute", createOrder);
 
     server.get("/ws", { websocket: true }, (connection: any, req: any) => {
       const { orderId } = req.query as { orderId: string };
@@ -119,10 +116,9 @@ describe("🔥 REAL End-to-End System Test", () => {
   test("👉 Full Lifecycle: API -> Queue -> Worker -> Blockchain -> WebSocket", async () => {
     return new Promise<void>(async (resolve, reject) => {
       try {
-        // 1. Submit Order (It will sit in Redis because NO WORKER is running yet)
         const response = await server.inject({
           method: "POST",
-          url: "/orders",
+          url: "/api/orders/execute",
           payload: {
             inputMint: "So11111111111111111111111111111111111111112",
             outputMint: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
@@ -133,14 +129,11 @@ describe("🔥 REAL End-to-End System Test", () => {
         const { orderId } = JSON.parse(response.payload);
         console.log(`[Test] Order Queued: ${orderId}`);
 
-        // 2. Connect WebSocket
         wsClient = new WebSocket(`ws://localhost:3002/ws?orderId=${orderId}`);
 
         wsClient.on("open", async () => {
           console.log("[Test] WS Connected. Starting Worker now...");
 
-          // 3. START WORKER NOW (Deterministic!)
-          // The socket is definitely open, so we are safe to process the job.
           worker = startWorker();
         });
 
@@ -166,7 +159,7 @@ describe("🔥 REAL End-to-End System Test", () => {
     const key = `test-${Date.now()}`;
     const res1 = await server.inject({
       method: "POST",
-      url: "/orders",
+      url: "/api/orders/execute",
       headers: { "x-idempotency-key": key },
       payload: { inputMint: "SOL", outputMint: "USDC", amount: 0.01 },
     });
@@ -174,7 +167,7 @@ describe("🔥 REAL End-to-End System Test", () => {
 
     const res2 = await server.inject({
       method: "POST",
-      url: "/orders",
+      url: "/api/orders/execute",
       headers: { "x-idempotency-key": key },
       payload: { inputMint: "SOL", outputMint: "USDC", amount: 0.01 },
     });
