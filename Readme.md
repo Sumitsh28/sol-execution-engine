@@ -58,10 +58,10 @@ sequenceDiagram
     W->>HR: Begin Routing
 
     par Parallel quoting
-        HR->>Ray: Request Quote
+        HR->>Ray: Request Quote (Raydium)
         Ray-->>HR: Quote / Error
     and
-        HR->>Met: Request Quote
+        HR->>Met: Request Quote (Meteora)
         Met-->>HR: Quote / Error
     end
 
