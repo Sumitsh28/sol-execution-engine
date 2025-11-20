@@ -25,12 +25,15 @@
     "ioredis": "^5.8.2",
     "pg": "^8.16.3",
     "reflect-metadata": "^0.2.2",
-    "typeorm": "^0.3.27"
+    "string-width": "^8.1.0",
+    "typeorm": "^0.3.27",
+    "wcwidth": "^1.0.1"
   },
   "devDependencies": {
     "@types/bn.js": "^5.2.0",
     "@types/node": "^24.10.1",
     "@types/pg": "^8.15.6",
+    "@types/wcwidth": "^1.0.2",
     "nodemon": "^3.1.11",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3"
