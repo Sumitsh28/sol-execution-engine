@@ -21,7 +21,7 @@ const startServer = async () => {
 
   server.post("/orders", createOrder);
 
-  server.get("/ws", { websocket: true }, (connection, req) => {
+  server.get("/ws", { websocket: true }, (connection: any, req: any) => {
     const query = req.query as { orderId: string };
     const { orderId } = query;
 
@@ -30,7 +30,7 @@ const startServer = async () => {
       return;
     }
 
-    console.log(`Client connected for Order: ${orderId}`);
+    console.log(`🔌 Client connected for Order: ${orderId}`);
     activeConnections.set(orderId, connection.socket);
 
     redisSubscriber.subscribe(`order-updates:${orderId}`);
@@ -44,7 +44,6 @@ const startServer = async () => {
 
   redisSubscriber.on("message", (channel, message) => {
     const orderId = channel.split(":")[1];
-
     if (activeConnections.has(orderId)) {
       const socket = activeConnections.get(orderId);
       socket.send(message);
@@ -53,7 +52,7 @@ const startServer = async () => {
 
   try {
     await server.listen({ port: PORT, host: "0.0.0.0" });
-    console.log(`Server running on http://localhost:${PORT}`);
+    console.log(`🚀 Server running on http://localhost:${PORT}`);
   } catch (err) {
     server.log.error(err);
     process.exit(1);
