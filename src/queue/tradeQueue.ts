@@ -10,6 +10,15 @@ const redisConfig = {
 
 export const tradeQueue = new Queue("trade-queue", {
   connection: redisConfig,
+  defaultJobOptions: {
+    attempts: 3,
+    backoff: {
+      type: "exponential",
+      delay: 1000,
+    },
+    removeOnComplete: true,
+    removeOnFail: false,
+  },
 });
 
-console.log("✅ Trade Queue Initialized");
+console.log("✅ Trade Queue Initialized (100 orders/min limit set)");

@@ -23,7 +23,7 @@ const publishUpdate = async (
 };
 
 const startWorker = async () => {
-  await AppDataSource.initialize();
+  if (!AppDataSource.isInitialized) await AppDataSource.initialize();
   const orderRepository = AppDataSource.getRepository(Order);
   const dexHandler = new DexHandler();
 
@@ -41,17 +41,15 @@ const startWorker = async () => {
         order.status = "routing";
         await orderRepository.save(order);
         await publishUpdate(orderId, "routing", {
-          message: "Scanning Meteora & Raydium...",
+          message: "Scanning DEXs...",
         });
-
-        await new Promise((r) => setTimeout(r, 1000));
 
         order.status = "building";
         await publishUpdate(orderId, "building", {
-          message: "Building transaction...",
+          message: "Executing Strategy...",
         });
 
-        const { txHash, price } = await dexHandler.executeSwap(
+        const { txHash, price, dex } = await dexHandler.executeSwap(
           orderId,
           order.amount
         );
@@ -59,13 +57,23 @@ const startWorker = async () => {
         order.status = "confirmed";
         order.txHash = txHash;
         order.executedPrice = price;
-        order.logs.push(`Swapped on Meteora at ${price}`);
+        order.logs.push(
+          `Routed via ${dex.toUpperCase()} at ${price.toFixed(4)} USDC`
+        );
+
+        const explorerUrl =
+          dex === "mock-engine"
+            ? "https://explorer.solana.com/?cluster=devnet"
+            : `https://explorer.solana.com/tx/${txHash}?cluster=devnet`;
+
+        console.log(`SUCCESS! [${dex.toUpperCase()}] Link: ${explorerUrl}`);
 
         await orderRepository.save(order);
         await publishUpdate(orderId, "confirmed", {
           txHash,
           price,
-          explorerUrl: `https://explorer.solana.com/tx/${txHash}?cluster=devnet`,
+          dex,
+          explorerUrl,
         });
       } catch (error: any) {
         console.error(`Order ${orderId} failed:`, error.message);
@@ -74,9 +82,18 @@ const startWorker = async () => {
         order.error = error.message;
         await orderRepository.save(order);
         await publishUpdate(orderId, "failed", { error: error.message });
+
+        throw error;
       }
     },
-    { connection: redisConfig }
+    {
+      connection: redisConfig,
+      concurrency: 10,
+      limiter: {
+        max: 100,
+        duration: 60000,
+      },
+    }
   );
 };
 
