@@ -15,8 +15,6 @@ import { randomUUID } from "crypto";
 
 dotenv.config();
 
-const SOL_MINT = "So11111111111111111111111111111111111111112";
-const USDC_MINT = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU";
 const RAYDIUM_PROGRAM_ID = new PublicKey(
   "HWy1jotHpo6UqeQxx49dpYYdQB8wj9Qk9MdxwjLvDHB8"
 );
@@ -29,34 +27,12 @@ type RouteQuote = {
 };
 
 class VirtualAMM {
-  // Simulate a healthy pool: 10k SOL / $1.4M USDC
-  private reserveSOL = 10000;
-  private reserveUSDC = 1400000;
-  private constantK: number;
-
-  constructor() {
-    this.constantK = this.reserveSOL * this.reserveUSDC;
-  }
-
-  getQuote(amountInSOL: number) {
-    const amountAfterFee = amountInSOL * 0.997;
-
-    const newReserveSOL = this.reserveSOL + amountAfterFee;
-    const newReserveUSDC = this.constantK / newReserveSOL;
-    const amountOutUSDC = this.reserveUSDC - newReserveUSDC;
-
-    let price = amountOutUSDC / amountInSOL;
-
-    const variance = Math.random() * 0.05;
-    const direction = Math.random() > 0.5 ? 1 : -1;
-    price = price * (1 + variance * direction);
-
-    const finalAmount = amountInSOL * price;
-
+  getQuote(amountIn: number) {
+    const price = 1.0 + (Math.random() * 0.05 - 0.025);
+    const amountOut = amountIn * price;
     return {
-      outAmount: finalAmount,
+      outAmount: amountOut,
       price: price,
-      impact: (1 - price / (this.reserveUSDC / this.reserveSOL)) * 100,
     };
   }
 }
@@ -84,7 +60,7 @@ export class DexHandler {
       }
       this.wallet = Keypair.fromSecretKey(secretKey);
     } catch (e) {
-      console.error("Invalid Private Key format in .env");
+      console.error("❌ Invalid Private Key format in .env");
       process.exit(1);
     }
   }
@@ -100,17 +76,41 @@ export class DexHandler {
     });
   }
 
-  async getPriorityFeeInstruction(): Promise<TransactionInstruction> {
-    return ComputeBudgetProgram.setComputeUnitPrice({
-      microLamports: 500000,
-    });
+  async getDynamicPriorityFee(): Promise<TransactionInstruction> {
+    try {
+      const recentFees = await this.connection.getRecentPrioritizationFees();
+
+      if (recentFees.length === 0) {
+        return ComputeBudgetProgram.setComputeUnitPrice({
+          microLamports: 5000,
+        });
+      }
+
+      const sortedFees = recentFees
+        .map((x) => x.prioritizationFee)
+        .sort((a, b) => a - b);
+
+      const medianFee = sortedFees[Math.floor(sortedFees.length / 2)];
+
+      const finalFee = Math.min(Math.max(medianFee, 5000), 100000);
+
+      return ComputeBudgetProgram.setComputeUnitPrice({
+        microLamports: finalFee,
+      });
+    } catch (error) {
+      return ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 5000 });
+    }
   }
 
-  async getMeteoraCandidates(amount: number): Promise<RouteQuote[]> {
+  async getMeteoraCandidates(
+    amount: number,
+    inputMint: string,
+    outputMint: string
+  ): Promise<RouteQuote[]> {
     try {
       const pools = await DLMM.getLbPairs(this.connection, {
         cluster: "devnet",
-        params: { limit: 1000 },
+        params: { limit: 50 },
       } as any);
 
       const validPools = pools.filter((p: any) => {
@@ -118,17 +118,13 @@ export class DexHandler {
         const tX = p.account.tokenXMint.toString();
         const tY = p.account.tokenYMint.toString();
         return (
-          (tX === SOL_MINT && tY === USDC_MINT) ||
-          (tX === USDC_MINT && tY === SOL_MINT)
+          (tX === inputMint && tY === outputMint) ||
+          (tX === outputMint && tY === inputMint)
         );
       });
 
-      validPools.sort(
-        (a: any, b: any) => Number(b.liquidity || 0) - Number(a.liquidity || 0)
-      );
-
       const candidates: RouteQuote[] = [];
-      for (const pool of validPools.slice(0, 5)) {
+      for (const pool of validPools.slice(0, 3)) {
         try {
           const dlmm = await DLMM.create(
             this.connection,
@@ -137,6 +133,7 @@ export class DexHandler {
           );
           const binArrays = await dlmm.getBinArrayForSwap(false, 20);
           const inAmountBN = new BN(Math.floor(amount * 1_000_000_000));
+
           const quote = await dlmm.swapQuote(
             inAmountBN,
             false,
@@ -146,9 +143,15 @@ export class DexHandler {
 
           candidates.push({
             dex: "meteora",
-            price: Number(quote.outAmount) / 1_000_000,
+            price: Number(quote.outAmount) / 1_000_000_000,
             outAmount: quote.outAmount,
-            data: { poolAddress: pool.publicKey, quote, inAmountBN },
+            data: {
+              poolAddress: pool.publicKey,
+              quote,
+              inAmountBN,
+              inputMint,
+              outputMint,
+            },
           });
         } catch (e) {
           continue;
@@ -160,15 +163,17 @@ export class DexHandler {
     }
   }
 
-  async getRaydiumCandidates(amount: number): Promise<RouteQuote[]> {
+  async getRaydiumCandidates(
+    amount: number,
+    inputMint: string,
+    outputMint: string
+  ): Promise<RouteQuote[]> {
     try {
       await this.initRaydium();
 
       const accounts = await this.connection.getProgramAccounts(
         RAYDIUM_PROGRAM_ID,
-        {
-          filters: [{ dataSize: 752 }],
-        }
+        { filters: [{ dataSize: 752 }] }
       );
 
       const matches = [];
@@ -178,8 +183,8 @@ export class DexHandler {
         const mintB = new PublicKey(data.subarray(432, 464)).toBase58();
 
         if (
-          (mintA === SOL_MINT && mintB === USDC_MINT) ||
-          (mintA === USDC_MINT && mintB === SOL_MINT)
+          (mintA === inputMint && mintB === outputMint) ||
+          (mintA === outputMint && mintB === inputMint)
         ) {
           matches.push({ id: acc.pubkey.toBase58(), mintA, mintB });
         }
@@ -203,16 +208,21 @@ export class DexHandler {
           const { amountOut } = await this.raydium!.liquidity.computeAmountOut({
             poolInfo: poolKeys,
             amountIn,
-            mintIn: SOL_MINT,
-            mintOut: USDC_MINT,
+            mintIn: new PublicKey(inputMint),
+            mintOut: new PublicKey(outputMint),
             slippage: 0.1,
           });
 
           candidates.push({
             dex: "raydium",
-            price: Number(amountOut) / 1_000_000,
+            price: Number(amountOut) / 1_000_000_000,
             outAmount: amountOut,
-            data: { pool: poolKeys, amountIn, minAmountOut: new BN(0) },
+            data: {
+              pool: poolKeys,
+              amountIn,
+              minAmountOut: new BN(0),
+              inputMint,
+            },
           });
         } catch (e) {
           continue;
@@ -227,28 +237,10 @@ export class DexHandler {
   async executeMockSwap(
     amount: number
   ): Promise<{ txHash: string; price: number; dex: string }> {
-    console.log(
-      "Blockchain congested/unavailable. Engaging Virtual AMM Protocol..."
-    );
-
     const quote = this.virtualPool.getQuote(amount);
-    console.log(
-      `Virtual Pool Impact: ${quote.impact.toFixed(
-        4
-      )}% | Price: ${quote.price.toFixed(4)}`
-    );
-
-    const delay = Math.floor(Math.random() * 1000) + 2000;
-    console.log(`⏳ Simulating network confirmation (${delay}ms)...`);
-    await new Promise((resolve) => setTimeout(resolve, delay));
-
+    await new Promise((resolve) => setTimeout(resolve, 2000));
     const mockTx = `mock_tx_${randomUUID().replace(/-/g, "")}`.substring(0, 64);
-
-    return {
-      txHash: mockTx,
-      price: quote.price,
-      dex: "mock-engine",
-    };
+    return { txHash: mockTx, price: quote.price, dex: "mock-engine" };
   }
 
   private withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
@@ -260,20 +252,33 @@ export class DexHandler {
 
   async executeSwap(
     orderId: string,
-    amount: number
+    amount: number,
+    inputMint: string,
+    outputMint: string
   ): Promise<{ txHash: string; price: number; dex: string }> {
     console.log(`\n🔍 [Router] Scanning liquidity for Order ${orderId}...`);
 
     try {
       const [meteora, raydium] = await Promise.all([
-        this.getMeteoraCandidates(amount),
-        this.withTimeout(this.getRaydiumCandidates(amount), 3000),
+        this.withTimeout(
+          this.getMeteoraCandidates(amount, inputMint, outputMint),
+          5000
+        ),
+        this.withTimeout(
+          this.getRaydiumCandidates(amount, inputMint, outputMint),
+          5000
+        ),
       ]);
 
-      const allRoutes = [...meteora, ...(raydium || [])].sort((a, b) =>
+      const safeMeteora = meteora || [];
+      const safeRaydium = raydium || [];
+
+      const allRoutes = [...safeMeteora, ...safeRaydium].sort((a, b) =>
         b.outAmount.sub(a.outAmount).toNumber()
       );
-      console.log(`   > Found ${allRoutes.length} real pools.`);
+
+      console.log(`   > Found ${safeMeteora.length} Meteora pools`);
+      console.log(`   > Found ${safeRaydium.length} Raydium pools`);
 
       for (const route of allRoutes) {
         try {
@@ -281,7 +286,7 @@ export class DexHandler {
           if (route.dex === "meteora") return await this.executeMeteora(route);
           if (route.dex === "raydium") return await this.executeRaydium(route);
         } catch (e: any) {
-          console.warn(`⚠️ Route failed: ${e.message.split("\n")[0]}... Next.`);
+          console.warn(`⚠️ Route failed: ${e.message}... Next.`);
         }
       }
     } catch (e) {
@@ -289,7 +294,7 @@ export class DexHandler {
     }
 
     console.log(
-      "All Real DEXs failed (Devnet Congestion). Switching to Mock Execution."
+      "All Real DEXs failed or Congested. Switching to Mock Execution."
     );
     return await this.executeMockSwap(amount);
   }
@@ -297,12 +302,13 @@ export class DexHandler {
   private async executeMeteora(
     route: RouteQuote
   ): Promise<{ txHash: string; price: number; dex: string }> {
-    const { poolAddress, inAmountBN } = route.data;
+    const { poolAddress, inAmountBN, inputMint, outputMint } = route.data;
     const dlmm = await DLMM.create(
       this.connection,
       new PublicKey(poolAddress),
       { cluster: "devnet" }
     );
+
     await dlmm.refetchStates();
     const binArrays = await dlmm.getBinArrayForSwap(false, 20);
     const freshQuote = await dlmm.swapQuote(
@@ -313,8 +319,8 @@ export class DexHandler {
     );
 
     const swapTx = await dlmm.swap({
-      inToken: new PublicKey(SOL_MINT),
-      outToken: new PublicKey(USDC_MINT),
+      inToken: new PublicKey(inputMint),
+      outToken: new PublicKey(outputMint),
       inAmount: inAmountBN,
       minOutAmount: new BN(0),
       lbPair: dlmm.pubkey,
@@ -323,11 +329,10 @@ export class DexHandler {
     });
 
     const transaction = new Transaction();
-    const priorityIx = await this.getPriorityFeeInstruction();
+
+    const priorityIx = await this.getDynamicPriorityFee();
     transaction.add(priorityIx);
-    transaction.add(
-      ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 })
-    );
+
     transaction.add(...swapTx.instructions);
 
     const latestBlockhash = await this.connection.getLatestBlockhash();
@@ -351,14 +356,14 @@ export class DexHandler {
     route: RouteQuote
   ): Promise<{ txHash: string; price: number; dex: string }> {
     if (!this.raydium) await this.initRaydium();
-    const { pool, poolInfo, amountIn, minAmountOut } = route.data;
+    const { pool, poolInfo, amountIn, minAmountOut, inputMint } = route.data;
 
     const { execute } = await this.raydium!.liquidity.swap({
       poolInfo: { ...pool, ...poolInfo },
       amountIn: amountIn,
       amountOut: minAmountOut,
       fixedSide: "in",
-      inputMint: SOL_MINT,
+      inputMint: inputMint,
       txVersion: 0,
     });
 

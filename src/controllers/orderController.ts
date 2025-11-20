@@ -3,6 +3,7 @@ import { AppDataSource } from "../config/database";
 import { Order } from "../entities/Order";
 import { tradeQueue } from "../queue/tradeQueue";
 import { redisClient } from "../config/redis";
+import { TokenService } from "../services/tokenService";
 
 interface CreateOrderRequest {
   inputMint: string;
@@ -17,7 +18,13 @@ export const createOrder = async (
   const { inputMint, outputMint, amount } = req.body;
 
   if (!inputMint || !outputMint || !amount) {
-    return reply.status(400).send({ error: "Missing required fields" });
+    return reply.status(400).send({
+      error: "Missing required fields: inputMint, outputMint, amount",
+    });
+  }
+
+  if (amount <= 0) {
+    return reply.status(400).send({ error: "Amount must be greater than 0" });
   }
 
   const idempotencyKey = req.headers["x-idempotency-key"] as string;
@@ -26,19 +33,48 @@ export const createOrder = async (
       `idempotency:${idempotencyKey}`
     );
     if (existingOrderId) {
-      return reply.send({ orderId: existingOrderId, status: "duplicate" });
+      console.log(`🔁 Idempotency hit for key: ${idempotencyKey}`);
+      return reply.status(200).send({
+        orderId: existingOrderId,
+        message: "Order already received (Idempotent)",
+        status: "duplicate",
+      });
     }
   }
 
   try {
+    let resolvedInput = inputMint;
+    let resolvedOutput = outputMint;
+
+    if (inputMint.length < 10) {
+      const mint = await TokenService.getMint(inputMint);
+      if (!mint)
+        return reply
+          .status(400)
+          .send({ error: `Unknown token symbol: ${inputMint}` });
+      resolvedInput = mint;
+    }
+
+    if (outputMint.length < 10) {
+      const mint = await TokenService.getMint(outputMint);
+      if (!mint)
+        return reply
+          .status(400)
+          .send({ error: `Unknown token symbol: ${outputMint}` });
+      resolvedOutput = mint;
+    }
+
     const orderRepository = AppDataSource.getRepository(Order);
     const newOrder = orderRepository.create({
-      inputMint,
-      outputMint,
+      inputMint: resolvedInput,
+      outputMint: resolvedOutput,
       amount,
       status: "pending",
-      logs: [`[${new Date().toISOString()}] Order received`],
+      logs: [
+        `[${new Date().toISOString()}] Order received. Input resolved to ${resolvedInput}`,
+      ],
     });
+
     await orderRepository.save(newOrder);
 
     await tradeQueue.add("execute-trade", { orderId: newOrder.id });
@@ -54,13 +90,13 @@ export const createOrder = async (
 
     return reply.status(201).send({
       orderId: newOrder.id,
-      message: "Order queued",
+      message: "Order queued successfully",
       wsUrl: `ws://localhost:${process.env.PORT || 3000}/ws?orderId=${
         newOrder.id
       }`,
     });
   } catch (error) {
-    console.error(error);
+    console.error("API Error:", error);
     return reply.status(500).send({ error: "Internal Server Error" });
   }
 };
