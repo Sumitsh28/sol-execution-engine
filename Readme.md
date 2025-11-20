@@ -1,9 +1,86 @@
 # Solana Order Execution Engine
 
-**Version:** 1.0.0
-**Status:** Production-Ready (Devnet)
-**Architecture:** Event-Driven Microservices
-**Observability:** Prometheus & Grafana (RED Method)
+#### Version: 1.0.0
+#### Status: Production-Ready (Devnet)
+#### Architecture: Event-Driven Microservices
+#### Observability: Prometheus & Grafana (RED Method)
+
+```mermaid
+%%{init: {
+  'theme': 'dark',
+  'themeVariables': {
+    'secondaryColor': '#0d1117',
+    'primaryColor': '#1b1f24',
+    'primaryTextColor': '#e6edf3',
+    'lineColor': '#58a6ff',
+    'actorBorderColor': '#999'
+  },
+  'sequence': { 'mirrorActors': false }
+}}%%
+
+sequenceDiagram
+    autonumber
+
+    participant C as 🧑 Client
+    participant API as 🚀 Fastify API
+    participant R as 🔴 Redis (Queue + Idempotency)
+    participant PG as 🐘 PostgreSQL
+    participant W as ⚙️ Worker
+    participant J as 🪐 Jupiter API
+    participant F as 💸 Fee RPC
+    participant HR as 🔀 Hybrid Router
+    participant Ray as 💧 Raydium
+    participant Met as 🌀 Meteora
+    participant Mock as 🧪 Mock Engine
+    participant S as 🟣 Solana
+    participant PUB as 📡 Redis Pub/Sub
+    participant WS as 🔌 WebSocket
+
+    Note over C,WS: **SYSTEM SEQUENCE WITH COMPACT WORKER INTERNALS + FALLBACK**
+
+    C->>API: POST /orders
+    API->>R: Check x-idempotency-key
+    API->>PG: Insert Pending Order
+    API->>R: Push Job (BullMQ)
+
+    C-->>WS: WebSocket Connect
+
+    R->>W: Pop Job
+
+    Note over W,J: **Worker Internal Path**
+
+    W->>R: Read Token Cache
+    R-->>W: Cache Miss
+    W->>J: Fetch Token Data
+
+    W->>F: Fetch Prioritization Fees
+
+    W->>HR: Begin Routing
+
+    par Parallel quoting
+        HR->>Ray: Request Quote
+        Ray-->>HR: Quote / Error
+    and
+        HR->>Met: Request Quote
+        Met-->>HR: Quote / Error
+    end
+
+    alt If both Raydium & Meteora fail/timeout
+        HR->>Mock: Use Fallback Engine (Mock Quote)
+        Mock-->>HR: Mock Quote
+    end
+
+    HR-->>W: Best Price Selected
+
+    W->>S: Submit Transaction
+    S-->>W: Tx Confirmed
+
+    W->>PG: Update Order Status
+    W->>PUB: Publish Event
+    PUB-->>WS: Push Order Update
+    WS-->>C: Notify Client
+```
+
 
 ---
 
