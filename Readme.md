@@ -4,6 +4,8 @@
 #### Status: Production-Ready (Devnet)
 #### Architecture: Event-Driven Microservices
 #### Observability: Prometheus & Grafana (RED Method)
+#### Deployed Link: 
+#### YT Video Link (Demo):
 
 ```mermaid
 %%{init: {
