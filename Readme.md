@@ -5,7 +5,7 @@
 #### Architecture: Event-Driven Microservices
 #### Observability: Prometheus & Grafana (RED Method)
 #### Deployed Link: 
-#### YT Video Link (Demo): https://youtu.be/z9-Oz2XdNYs
+#### YT Video Link (Demo): https://youtu.be/eDAJ_CO_Yic , https://youtu.be/z9-Oz2XdNYs
 
 ```mermaid
 %%{init: {
