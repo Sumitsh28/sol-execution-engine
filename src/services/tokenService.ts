@@ -7,7 +7,7 @@ export class TokenService {
 
   private static FALLBACK_MAP: Record<string, string> = {
     SOL: "So11111111111111111111111111111111111111112",
-    USDC: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    USDC: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
     USDT: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
   };
 
@@ -17,7 +17,7 @@ export class TokenService {
       return JSON.parse(cached);
     }
 
-    console.log("🔄 Fetching fresh token list from Jupiter...");
+    console.log("Fetching fresh token list from Jupiter...");
     try {
       const { data } = await axios.get("https://token.jup.ag/strict");
 
@@ -36,7 +36,7 @@ export class TokenService {
       );
       return finalMap;
     } catch (error) {
-      console.error("❌ Failed to fetch token list. Using Fallback.");
+      console.error("Failed to fetch token list. Using Fallback.");
       return this.FALLBACK_MAP;
     }
   }

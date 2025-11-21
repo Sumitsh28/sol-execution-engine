@@ -28,8 +28,8 @@ type RouteQuote = {
 
 class VirtualAMM {
   getQuote(amountIn: number, inputMint: string, outputMint: string) {
-    const baseReserve = 1_000_000 + Math.random() * 500_000;
-    const quoteReserve = 1_500_000 + Math.random() * 200_000;
+    const baseReserve = 1_500_000 + (Math.random() * 100_000 - 50_000);
+    const quoteReserve = 1_500_000 + (Math.random() * 100_000 - 50_000);
 
     const k = baseReserve * quoteReserve;
 
@@ -50,6 +50,8 @@ class VirtualAMM {
       impact: priceImpact,
       fee: amountIn * feeRate,
       k: k,
+      baseRes: baseReserve,
+      quoteRes: quoteReserve,
     };
   }
 }
@@ -106,9 +108,7 @@ export class DexHandler {
         .sort((a, b) => a - b);
       const medianFee = sortedFees[Math.floor(sortedFees.length / 2)];
       const finalFee = Math.min(Math.max(medianFee, 5000), 100000);
-      console.log(
-        `   [Fees] Dynamic Priority: ${finalFee} microLamports (Median of last 20 slots)`
-      );
+      console.log(`   [Fees] Dynamic Priority: ${finalFee} microLamports`);
       return ComputeBudgetProgram.setComputeUnitPrice({
         microLamports: finalFee,
       });
@@ -120,17 +120,14 @@ export class DexHandler {
   async getMeteoraCandidates(
     amount: number,
     inputMint: string,
-    outputMint: string,
-    isExpired: { value: boolean }
+    outputMint: string
   ): Promise<RouteQuote[]> {
-    console.log(`   [Meteora] Scanning DLMM Pools...`);
+    console.log(`   [Meteora] Scanning DLMM Pools (Exhaustive)...`);
     try {
       const pools = await DLMM.getLbPairs(this.connection, {
         cluster: "devnet",
         params: { limit: 20 },
       } as any);
-
-      if (isExpired.value) return [];
 
       const validPools = pools.filter((p: any) => {
         if (!p.account) return false;
@@ -143,12 +140,11 @@ export class DexHandler {
       });
 
       console.log(
-        `   [Meteora] Found ${validPools.length} matching pools (checking liquidity now...)`
+        `   [Meteora] Found ${validPools.length} potential pools. Checking liquidity depth...`
       );
       const candidates: RouteQuote[] = [];
 
-      for (const pool of validPools.slice(0, 3)) {
-        if (isExpired.value) break;
+      for (const pool of validPools) {
         try {
           const dlmm = await DLMM.create(
             this.connection,
@@ -157,6 +153,7 @@ export class DexHandler {
           );
           const binArrays = await dlmm.getBinArrayForSwap(false, 20);
           const inAmountBN = new BN(Math.floor(amount * 1_000_000_000));
+
           const quote = await dlmm.swapQuote(
             inAmountBN,
             false,
@@ -184,11 +181,6 @@ export class DexHandler {
             },
           });
         } catch (e: any) {
-          console.log(
-            `      [Meteora] Pool ${pool.publicKey
-              .toBase58()
-              .slice(0, 6)}... Empty/Error: ${e.message}`
-          );
           continue;
         }
       }
@@ -201,18 +193,15 @@ export class DexHandler {
   async getRaydiumCandidates(
     amount: number,
     inputMint: string,
-    outputMint: string,
-    isExpired: { value: boolean }
+    outputMint: string
   ): Promise<RouteQuote[]> {
-    console.log(`   [Raydium] Scanning AMM Pools...`);
+    console.log(`   [Raydium] Scanning AMM Pools (Exhaustive)...`);
     try {
       await this.initRaydium();
       const accounts = await this.connection.getProgramAccounts(
         RAYDIUM_PROGRAM_ID,
         { filters: [{ dataSize: 752 }] }
       );
-
-      if (isExpired.value) return [];
 
       const matches = [];
       for (const acc of accounts) {
@@ -226,11 +215,12 @@ export class DexHandler {
           matches.push({ id: acc.pubkey.toBase58(), mintA, mintB });
         }
       }
-      console.log(`   [Raydium] Found ${matches.length} active pools.`);
+      console.log(
+        `   [Raydium] Found ${matches.length} potential pools. Checking liquidity depth...`
+      );
 
       const candidates: RouteQuote[] = [];
-      for (const poolData of matches.slice(0, 3)) {
-        if (isExpired.value) break;
+      for (const poolData of matches) {
         try {
           const poolInfo = await this.raydium!.liquidity.getRpcPoolInfo(
             poolData.id
@@ -256,7 +246,13 @@ export class DexHandler {
           });
 
           const outDecimal = Number(amountOut) / 1_000_000_000;
-          console.log(`      [Raydium] Quote: ${outDecimal.toFixed(6)}`);
+          console.log(
+            `      [Raydium] Pool ${poolData.id.slice(
+              0,
+              6
+            )}... : Quote ${outDecimal.toFixed(6)}`
+          );
+
           candidates.push({
             dex: "raydium",
             price: outDecimal,
@@ -286,10 +282,13 @@ export class DexHandler {
     const quote = this.virtualPool.getQuote(amount, inputMint, outputMint);
     const mockTx = `mock_tx_${randomUUID().replace(/-/g, "")}`.substring(0, 64);
 
-    console.log(`\n[Virtual AMM] Engaged Fallback Execution Protocol`);
+    console.log(`\n [Virtual AMM] Engaged Fallback Execution Protocol`);
     console.log(`   ──────────────────────────────────────────────────`);
     console.log(`   Math Model    : Constant Product (k = x * y)`);
-    console.log(`   Liquidity K   : ${quote.k.toExponential(4)}`);
+    console.log(`   Base Reserve  : ${quote.baseRes.toFixed(2)}`);
+    console.log(`   Quote Reserve : ${quote.quoteRes.toFixed(2)}`);
+    console.log(`   Liquidity (k) : ${quote.k.toExponential(4)}`);
+    console.log(`   ──────────────────────────────────────────────────`);
     console.log(`   Fee (0.3%)    : ${quote.fee.toFixed(6)}`);
     console.log(`   Price Impact  : ${quote.impact.toFixed(4)}%`);
     console.log(`   Execution Px  : ${quote.price.toFixed(6)}`);
@@ -309,59 +308,40 @@ export class DexHandler {
   ): Promise<{ txHash: string; price: number; dex: string }> {
     console.log(`\n[Router] Scanning liquidity for Order ${orderId}...`);
 
-    const expired = { value: false };
-
     try {
       const [meteora, raydium] = await Promise.all([
-        this.withTimeout(
-          this.getMeteoraCandidates(amount, inputMint, outputMint, expired),
-          5000
-        ),
-        this.withTimeout(
-          this.getRaydiumCandidates(amount, inputMint, outputMint, expired),
-          5000
-        ),
+        this.getMeteoraCandidates(amount, inputMint, outputMint),
+        this.getRaydiumCandidates(amount, inputMint, outputMint),
       ]);
 
-      if (!meteora && !raydium) expired.value = true;
-
-      const safeMeteora = meteora || [];
-      const safeRaydium = raydium || [];
-      const allRoutes = [...safeMeteora, ...safeRaydium].sort((a, b) =>
+      const allRoutes = [...meteora, ...raydium].sort((a, b) =>
         b.outAmount.sub(a.outAmount).toNumber()
       );
 
       if (allRoutes.length > 0) {
         console.log(
-          `   Best Route: ${allRoutes[0].dex.toUpperCase()} @ ${allRoutes[0].price.toFixed(
+          `\n   Best Route: ${allRoutes[0].dex.toUpperCase()} @ ${allRoutes[0].price.toFixed(
             4
           )}`
         );
-        console.log(
-          `\nAttempting Execution via ${allRoutes[0].dex.toUpperCase()}...`
-        );
 
-        if (allRoutes[0].dex === "meteora")
-          return await this.executeMeteora(allRoutes[0]);
-        if (allRoutes[0].dex === "raydium")
-          return await this.executeRaydium(allRoutes[0]);
+        try {
+          if (allRoutes[0].dex === "meteora")
+            return await this.executeMeteora(allRoutes[0]);
+          if (allRoutes[0].dex === "raydium")
+            return await this.executeRaydium(allRoutes[0]);
+        } catch (e: any) {
+          console.log(`   Real execution failed: ${e.message}. Falling back.`);
+        }
+      } else {
+        console.log(`   No valid liquidity pools found on Real DEXs.`);
       }
     } catch (e) {
-      console.log("   Real execution logic failed.");
+      console.log("   Router logic error.");
     }
 
-    expired.value = true;
-    console.log(
-      "Real-time liquidity unreachable (Timeout/Congestion). Switching to Virtual AMM."
-    );
+    console.log("   Switching to Virtual AMM to guarantee execution.");
     return await this.executeMockSwap(amount, inputMint, outputMint);
-  }
-
-  private withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
-    return Promise.race([
-      promise,
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), ms)),
-    ]);
   }
 
   private async executeMeteora(

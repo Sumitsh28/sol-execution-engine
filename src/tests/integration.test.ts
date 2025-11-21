@@ -7,7 +7,7 @@ import { createOrder } from "../controllers/orderController";
 import { AppDataSource } from "../config/database";
 import { tradeQueue } from "../queue/tradeQueue";
 import { Order } from "../entities/Order";
-import { DexHandler } from "../lib/solana";
+import { DexHandler } from "../lib/solana_exhaustive";
 import { Worker } from "bullmq";
 import Redis from "ioredis";
 import dotenv from "dotenv";

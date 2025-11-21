@@ -25,7 +25,7 @@ const color = {
 };
 
 const bars = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
-const spinnerFrames = ["🔄", "↻", "🔁", "⟳"];
+const spinnerFrames = ["↻", "⟳"];
 
 (async () => {
   if (!AppDataSource.isInitialized) await AppDataSource.initialize();

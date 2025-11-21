@@ -12,14 +12,14 @@ for i in {1..30}; do
     echo "[$i] Sending Valid Order..."
     curl -s -o /dev/null -X POST $API_URL \
          -H "Content-Type: application/json" \
-         -d '{"inputMint":"So11111111111111111111111111111111111111112", "outputMint":"EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", "amount": 0.1}'
+         -d '{"inputMint":"So11111111111111111111111111111111111111112", "outputMint":"4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU", "amount": 0.1}'
 
   elif [ $RAND -eq 8 ]; then
    
     echo "[$i] Sending Bad Request (Missing Amount)..."
     curl -s -o /dev/null -X POST $API_URL \
          -H "Content-Type: application/json" \
-         -d '{"inputMint":"So11111111111111111111111111111111111111112", "outputMint":"EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"}'
+         -d '{"inputMint":"So11111111111111111111111111111111111111112", "outputMint":"4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"}'
 
   else
     

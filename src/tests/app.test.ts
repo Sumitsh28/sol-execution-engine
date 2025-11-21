@@ -2,7 +2,7 @@ import Fastify, { FastifyInstance } from "fastify";
 import { createOrder } from "../controllers/orderController";
 import { tradeQueue } from "../queue/tradeQueue";
 import { redisClient } from "../config/redis";
-import { DexHandler } from "../lib/solana";
+import { DexHandler } from "../lib/solana_exhaustive";
 import { BN } from "bn.js";
 import { TokenService } from "../services/tokenService";
 
