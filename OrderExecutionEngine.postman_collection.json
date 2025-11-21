@@ -1,0 +1,134 @@
+{
+  "info": {
+    "_postman_id": "8b5f3a09-6d6c-4b3f-8c34-2e23d1d4d7a8",
+    "name": "Solana Order Execution Engine",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. POST: Submit New Order & Capture ID",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "// Generate a unique ID for idempotency check and reuse",
+              "const uuid = require('uuid');",
+              "pm.environment.set(\"idempotency_key\", uuid.v4());",
+              "console.log(\"Generated Idempotency Key: \" + pm.environment.get(\"idempotency_key\"));"
+            ],
+            "type": "text/javascript"
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "// Test the HTTP status code is 201 or 200 (for idempotent duplicate)",
+              "pm.test(\"Status code is 201 (Created) or 200 (Duplicate)\", function () {",
+              "    pm.expect(pm.response.code).to.be.oneOf([201, 200]);",
+              "});",
+              "",
+              "// Parse the response body",
+              "var jsonData = pm.response.json();",
+              "",
+              "if (jsonData.orderId) {",
+              "    // Capture the orderId for the WebSocket request",
+              "    pm.environment.set(\"orderId\", jsonData.orderId);",
+              "    // Capture the dynamic WebSocket URL",
+              "    pm.environment.set(\"wsUrl\", pm.environment.get(\"baseUrl\") + \"/ws?orderId=\" + jsonData.orderId);",
+              "    console.log(\"Captured Order ID: \" + jsonData.orderId);",
+              "    console.log(\"Generated WS URL: \" + pm.environment.get(\"wsUrl\"));",
+              "} else {",
+              "    pm.test(\"Order ID was captured\", false);",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "x-idempotency-key",
+            "value": "{{idempotency_key}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n    \"inputMint\": \"So11111111111111111111111111111111111111112\",\n    \"outputMint\": \"4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU\",\n    \"amount\": 0.1\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/orders/execute",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "orders", "execute"]
+        },
+        "description": "Submits a market order. Run this first. It automatically sets the 'orderId' and 'wsUrl' environment variables needed for the WebSocket listener."
+      },
+      "response": []
+    },
+    {
+      "name": "2. WS: Listen for Execution Progress (LIFECYCLE)",
+      "request": {
+        "url": {
+          "raw": "ws://localhost:4000/ws?orderId={{orderId}}",
+          "protocol": "ws",
+          "host": ["localhost"],
+          "port": "4000",
+          "path": ["ws"],
+          "query": [
+            {
+              "key": "orderId",
+              "value": "{{orderId}}",
+              "disabled": true
+            }
+          ]
+        },
+        "description": "Connect to this WebSocket using the orderId captured in Request 1. You should see messages streaming in the sequence: pending -> routing -> building -> confirmed (or failed)."
+      },
+      "protocolProfileBehavior": {
+        "requestUrl": true,
+        "disableBodyPruning": true
+      }
+    },
+    {
+      "name": "3. GET: Prometheus Metrics Check",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/metrics",
+          "host": ["{{baseUrl}}"],
+          "path": ["metrics"]
+        },
+        "description": "Checks the health and metric data output of the Fastify API (including HTTP latency metrics). To see worker metrics (trades/min), use the worker's exposed port (4001)."
+      },
+      "response": []
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:4000",
+      "type": "string",
+      "description": "Base URL for the API. Change this if your host port is different."
+    },
+    {
+      "key": "idempotency_key",
+      "value": ""
+    },
+    {
+      "key": "orderId",
+      "value": "550e8400-e29b-41d4-a716-446655440000"
+    },
+    {
+      "key": "wsUrl",
+      "value": ""
+    }
+  ]
+}
