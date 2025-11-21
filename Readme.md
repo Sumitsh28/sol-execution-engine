@@ -142,18 +142,24 @@ The routing engine implements two distinct strategies to balance **Latency (User
 * **Goal:** **Availability & Speed** (< 5s response time).
 * **Logic:** Queries **Raydium (SDK v2)** and **Meteora (DLMM)** in parallel with a strict **5-second timeout**.
 * **Failover:** If the RPC hangs or networks fails (common on Devnet), the router aborts the real scan and immediately engages the **Virtual Mock AMM**. This prevents the UI/Demo from freezing during network congestion.
+![Default](/public/timeout.png)
 
 #### Strategy B: The "Exhaustive" Router (Audit Mode)
 * **Location:** `src/lib/solana_exhaustive.ts`
 * **Goal:** **Correctness & Liquidity Discovery**.
 * **Logic:** Disables the timeout circuit breaker. It waits for a full scan of the entire pool registry (~5,000+ pools) on both DEXs.
 * **Usage:** Used to verify if "0 pools found" is a result of timeout vs. actual lack of liquidity. It prioritizes finding a real route over execution speed.
+![Exhaustive](/public/exhaustive.png)
 
 **Routing Algorithm (Standard):**
 1.  **Parallel Scan:** `Promise.allSettled([Meteora, Raydium])`
 2.  **Normalization:** Converts raw token amounts to decimals for comparison.
 3.  **Optimization:** Sorts valid quotes by `amountOut` (Highest Return).
 4.  **Selection:** Executes the transaction on the winning DEX.
+
+**Real Transaction proof (Solana Explorer link):**
+<a href="https://explorer.solana.com/tx/3jm9WM6Eb23L6KfJdfogc853wwkQQRUeqGXYEE6rKZ242ykV91SfDPuSVXi42wCmGumqSMJwzRCNiSm1UTAkUZ5V?cluster=devnet" target="_blank">View transaction on Solana Explorer</a>
+![Proof](/public/real_txn.png)
 ---
 
 ### 4.2 Dynamic Priority Fees
@@ -228,14 +234,14 @@ A `/metrics` endpoint is exposed on both API and Worker nodes. Prometheus scrape
 These visualizations track the reliability of the order execution engine by calculating the percentage of successful HTTP requests (`2xx` status codes) against total requests.
 
 #### **1. Normal Operation (High Availability)**
-![Global Success Rate - Normal](assets/success_rate_normal.png)
+![Global Success Rate - Normal](/public/success_rate_normal.png)
 
 * **Metric:** **98.4%**
 * **Context:** This represents a stable production environment meeting a high Service Level Agreement (SLA).
 * **Analysis:** The high percentage indicates that the vast majority of orders are being processed successfully. The small deviation from 100% (1.6%) likely accounts for expected edge cases, such as invalid user input or minor network jitter, which are handled gracefully by the system without crashing. This baseline proves the system's stability under standard load.
 
 #### **2. Chaos Testing (Resilience)**
-![Global Success Rate - Chaos](assets/success_rate_chaos.png)
+![Global Success Rate - Chaos](/public/success_rate_chaos.png)
 
 * **Metric:** **84.8%** (with a visual dip in the trend line)
 * **Context:** This snapshot captures the system during a **"Chaos Traffic" simulation** where malformed JSON, invalid tokens, and 404 requests were intentionally injected.
@@ -248,7 +254,7 @@ These visualizations track the reliability of the order execution engine by calc
 
 `rate(order_processing_duration_seconds_count[1m]) * 60`
 
-![Trades Per Minute Graph](assets/trades_per_minute.png)
+![Trades Per Minute Graph](/public/trades_per_minute.png)
 
 This **Time Series** visualization is the heartbeat of your execution engine. It tracks the **Output Velocity**—specifically, how many orders the Worker service successfully processed and settled on-chain (or via Mock) per minute.
 
@@ -261,7 +267,7 @@ This **Time Series** visualization is the heartbeat of your execution engine. It
 
 #### Graph 3: End-to-End Latency (Average Execution Time)
 
-![Average Execution Time Graph](assets/avg_execution_time.png)
+![Average Execution Time Graph](/public/avg_execution_time.png)
 
 This **Stat Visualization** captures the efficiency of the order execution pipeline:
 
@@ -272,7 +278,7 @@ This **Stat Visualization** captures the efficiency of the order execution pipel
 * **Context:** Given the **2-second artificial delay** in the Mock Engine and the added overhead of database writes + Redis pub/sub, a ~7s average during heavy load demonstrates stable performance under stress.
 
 #### Graph 4: HTTP Traffic
-![Grafana HTTP Traffic Graph](assets/grafana-traffic-graph.png)
+![Grafana HTTP Traffic Graph](/public/http_traffic.png)
 
 This visualization demonstrates the system's observability and resilience under load:
 
@@ -285,14 +291,15 @@ This visualization demonstrates the system's observability and resilience under 
 ## 7. CLI Visualizer Overview
 
 #### **Screenshot 1: Confirmed State**
-![CLI Order Execution Dashboard - Confirmed](assets/cli_confirmed_state.jpg)
+![CLI Order Execution Dashboard - Confirmed](/public/real.png)
 
 * **Status:** Shows a long list of orders marked **`CONFIRMED`** (green), indicating successful end-to-end execution.
 * **Proof of Concept:** This list demonstrates that the system successfully handled a burst of traffic (likely from a simulation script) and processed every job to completion.
 * **Traceability:** The `DETAILS` column contains the `Tx: mock_tx_...` identifier. This confirms the worker successfully completed its task (in this case, via the Mock Engine fallback) and generated a transaction receipt.
 
 #### **Screenshot 2: Real-Time State Transition**
-![CLI Order Execution Dashboard - Real-Time](assets/cli_real_time_state.jpg)
+![CLI Order Execution Dashboard - Real-Time](/public/confirmed.png)
+![CLI Order Execution Dashboard - Real-Time](/public/routing.png)
 
 * **Status:** The selected order shows a temporary state of **`ROUTING`** (yellow/orange), and the surrounding orders show **`CONFIRMED`** (green).
 * **Proof of Concept:** This is the most crucial visualization for the video demo. It proves that the system actually transitions through the mandated states:
@@ -436,6 +443,7 @@ Sends malformed JSON and invalid tokens to validate metrics and error classifica
 ### Submit Order
 
 **POST** `/api/orders/execute`
+![Postman](/public/req.png)
 
 #### Headers
 
